@@ -1,5 +1,12 @@
 # claudepath
 
+[![CI](https://github.com/Mahiler1909/claudepath/actions/workflows/ci.yml/badge.svg)](https://github.com/Mahiler1909/claudepath/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/Mahiler1909/claudepath/branch/main/graph/badge.svg)](https://codecov.io/gh/Mahiler1909/claudepath)
+[![PyPI version](https://img.shields.io/pypi/v/claudepath)](https://pypi.org/project/claudepath/)
+[![Downloads](https://img.shields.io/pypi/dm/claudepath)](https://pypi.org/project/claudepath/)
+[![Python versions](https://img.shields.io/pypi/pyversions/claudepath)](https://pypi.org/project/claudepath/)
+[![License](https://img.shields.io/github/license/Mahiler1909/claudepath)](LICENSE)
+
 Move or rename [Claude Code](https://claude.ai/claude-code) projects without losing session history, memory, and context.
 
 ## The Problem
