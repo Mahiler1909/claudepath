@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "claudepath"
+version = "0.1.0"
+description = "Move or rename Claude Code projects without losing session history and context"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+authors = [
+    { name = "Fernando Chullo" }
+]
+keywords = ["claude", "claude-code", "anthropic", "cli", "project", "move"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+claudepath = "claudepath.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Mahiler1909/claudepath"
+Repository = "https://github.com/Mahiler1909/claudepath"
+Issues = "https://github.com/Mahiler1909/claudepath/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/claudepath"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
