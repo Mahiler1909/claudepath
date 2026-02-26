@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.0] - 2026-02-26
+
+### Fixed
+- `list` command now resolves real paths for all projects, including those without `sessions-index.json` or `cwd` fields in their session files
+- Three-tier fallback strategy for path resolution:
+  1. `originalPath` / `entries[].projectPath` from `sessions-index.json` (handles `null` originalPath bug in Claude Code)
+  2. `cwd` field from `.jsonl` session files
+  3. Filesystem DFS: probes the filesystem to disambiguate `-` as path separator vs hyphen in directory names
+
 ## [0.1.0] - 2026-02-25
 
 ### Added

@@ -58,6 +58,54 @@ def find_project_dir(claude_dir: Path, project_path: str) -> Optional[Path]:
     return None
 
 
+def _decode_encoded_name(encoded_name: str) -> Optional[str]:
+    """Try to recover the real absolute path from an encoded directory name
+    by checking which path components actually exist on disk.
+
+    Uses DFS with backtracking: each '-' in the name could be either a path
+    separator (originally '/') or a hyphen in a directory name. We probe the
+    filesystem to disambiguate.
+
+    Returns the real path string if found, None if the project no longer exists.
+    """
+    # Strip leading '-' (encodes the leading '/')
+    parts = encoded_name.lstrip("-").split("-")
+
+    def dfs(current: Path, remaining: List[str]) -> Optional[Path]:
+        if not remaining:
+            return current
+        for i in range(1, len(remaining) + 1):
+            candidate = current / "-".join(remaining[:i])
+            if candidate.is_dir():
+                result = dfs(candidate, remaining[i:])
+                if result is not None:
+                    return result
+        return None
+
+    found = dfs(Path("/"), parts)
+    return str(found) if found else None
+
+
+def _read_cwd_from_jsonl(jsonl_file: Path) -> Optional[str]:
+    """Read the cwd field from the first user/assistant message in a .jsonl file."""
+    try:
+        with open(jsonl_file, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    cwd = obj.get("cwd")
+                    if cwd:
+                        return cwd
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        pass
+    return None
+
+
 def list_projects(claude_dir: Path) -> List[Dict]:
     """List all Claude Code projects with metadata.
 
@@ -85,8 +133,11 @@ def list_projects(claude_dir: Path) -> List[Dict]:
         if index_file.exists():
             try:
                 data = json.loads(index_file.read_text(encoding="utf-8"))
-                project_path = data.get("originalPath")
+                project_path = data.get("originalPath") or None
                 entries = data.get("entries", [])
+                # Fallback: use projectPath from first entry if originalPath is null
+                if not project_path and entries:
+                    project_path = entries[0].get("projectPath") or None
                 session_count = len(entries)
                 if entries:
                     last_modified = max(
@@ -96,20 +147,26 @@ def list_projects(claude_dir: Path) -> List[Dict]:
                 pass
 
         # Count jsonl files as fallback for session count
+        jsonl_files = list(entry.glob("*.jsonl"))
         if session_count == 0:
-            jsonl_files = list(entry.glob("*.jsonl"))
             session_count = len(jsonl_files)
             if jsonl_files and last_modified is None:
-                most_recent = max(jsonl_files, key=lambda f: f.stat().st_mtime)
                 import datetime
+                most_recent = max(jsonl_files, key=lambda f: f.stat().st_mtime)
                 last_modified = datetime.datetime.fromtimestamp(
                     most_recent.stat().st_mtime
                 ).isoformat()
 
-        # Derive project path from encoded name if still unknown
+        # Fallback: read cwd from the first line of any .jsonl — always has the real path
+        if not project_path and jsonl_files:
+            project_path = _read_cwd_from_jsonl(jsonl_files[0])
+
+        # Fallback: probe the filesystem to decode the encoded directory name
         if not project_path:
-            # Best-effort: replace leading hyphen with / and remaining - with /
-            # This is ambiguous but better than nothing for display
+            project_path = _decode_encoded_name(entry.name)
+
+        # Last resort: encoded name with leading - replaced by /
+        if not project_path:
             project_path = entry.name.replace("-", "/", 1)
 
         results.append(
