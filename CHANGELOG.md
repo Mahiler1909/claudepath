@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.0] - 2026-02-26
+
+### Added
+- Update check on every command: fetches latest version from PyPI in a background thread and prints a notice if a newer version is available, showing both `pipx` and `brew` upgrade commands
+
 ## [0.2.0] - 2026-02-26
 
 ### Fixed

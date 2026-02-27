@@ -3,8 +3,11 @@ CLI entry point for claudepath.
 """
 
 import sys
+import threading
+import urllib.request
+import json as _json
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from claudepath import __version__
 from claudepath.mover import MoveError, move_project, remap_project
@@ -211,6 +214,29 @@ def cmd_list(args: list) -> None:
         print()
 
 
+def _check_latest_version() -> Optional[str]:
+    """Fetch the latest version from PyPI. Returns version string or None on failure."""
+    try:
+        req = urllib.request.Request(
+            "https://pypi.org/pypi/claudepath/json",
+            headers={"User-Agent": f"claudepath/{__version__}"},
+        )
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = _json.loads(resp.read())
+            return data["info"]["version"]
+    except Exception:
+        return None
+
+
+def _print_update_notice(latest: str) -> None:
+    print(
+        f"\n{_c('⚠', YELLOW, BOLD)}  {_c(f'New version available: {latest}', YELLOW)} "
+        f"{_c(f'(you have {__version__})', DIM)}"
+    )
+    print(f"   {_c('pipx upgrade claudepath', BOLD)}  {_c('# if installed via pipx', DIM)}")
+    print(f"   {_c('brew upgrade claudepath', BOLD)}  {_c('# if installed via Homebrew', DIM)}")
+
+
 def main() -> None:
     args = sys.argv[1:]
 
@@ -221,6 +247,14 @@ def main() -> None:
     if args[0] == "--version":
         print(f"claudepath {__version__}")
         return
+
+    # Check for updates in background — does not block command execution
+    latest_version: list = []
+    checker = threading.Thread(
+        target=lambda: latest_version.append(_check_latest_version()),
+        daemon=True,
+    )
+    checker.start()
 
     command = args[0]
     rest = args[1:]
@@ -235,6 +269,11 @@ def main() -> None:
         print_error(f"Unknown command: '{command}'")
         print("Run 'claudepath help' for usage.", file=sys.stderr)
         sys.exit(1)
+
+    # Wait up to 2s for the version check, then print notice if outdated
+    checker.join(timeout=2)
+    if latest_version and latest_version[0] and latest_version[0] != __version__:
+        _print_update_notice(latest_version[0])
 
 
 if __name__ == "__main__":
