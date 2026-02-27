@@ -1,0 +1,71 @@
+name: Update Homebrew Formula
+
+on:
+  workflow_run:
+    workflows: ["Publish to PyPI"]
+    types: [completed]
+
+jobs:
+  update-formula:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get version from tag
+        id: version
+        run: |
+          TAG="${{ github.event.workflow_run.head_branch }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Fetch PyPI metadata
+        id: pypi
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DATA=$(curl -s "https://pypi.org/pypi/claudepath/${VERSION}/json")
+          URL=$(echo "$DATA" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          for f in data['urls']:
+              if f['filename'].endswith('.tar.gz'):
+                  print(f['url'])
+                  break
+          ")
+          SHA256=$(echo "$DATA" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          for f in data['urls']:
+              if f['filename'].endswith('.tar.gz'):
+                  print(f['digests']['sha256'])
+                  break
+          ")
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew-tools
+        uses: actions/checkout@v4
+        with:
+          repository: Mahiler1909/homebrew-tools
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Update formula
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          URL="${{ steps.pypi.outputs.url }}"
+          SHA256="${{ steps.pypi.outputs.sha256 }}"
+
+          sed -i "s|url \".*\"|url \"${URL}\"|" Formula/claudepath.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" Formula/claudepath.rb
+
+          echo "Updated formula to v${VERSION}"
+          cat Formula/claudepath.rb
+
+      - name: Commit and push
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/claudepath.rb
+          git commit -m "chore: update claudepath to v${VERSION}"
+          git push
