@@ -51,6 +51,7 @@ def print_help() -> None:
   --dry-run        Preview changes without modifying any files
   --no-backup      Skip creating a backup before modifying files
   --yes            Skip interactive confirmation prompt
+  --merge          Merge sessions when destination already has Claude data
   --claude-dir     Override the Claude data directory (default: ~/.claude)
 
 {_c("EXAMPLES", BOLD)}
@@ -101,6 +102,7 @@ def _parse_mv_remap_args(args: list) -> dict:
         "dry_run": False,
         "no_backup": False,
         "yes": False,
+        "merge": False,
         "claude_dir": None,
     }
 
@@ -114,6 +116,8 @@ def _parse_mv_remap_args(args: list) -> dict:
             opts["no_backup"] = True
         elif arg in ("--yes", "-y"):
             opts["yes"] = True
+        elif arg == "--merge":
+            opts["merge"] = True
         elif arg == "--claude-dir":
             i += 1
             if i >= len(args):
@@ -147,6 +151,7 @@ def _run_operation(args: list, confirm_prompt: str, from_label: str, operation: 
     claude_dir = Path(opts["claude_dir"]).expanduser() if opts["claude_dir"] else None
     dry_run = opts["dry_run"]
     no_backup = opts["no_backup"]
+    merge = opts["merge"]
 
     if dry_run:
         print(_c("DRY RUN — no files will be modified", YELLOW, BOLD))
@@ -162,7 +167,7 @@ def _run_operation(args: list, confirm_prompt: str, from_label: str, operation: 
             sys.exit(0)
 
     try:
-        result = operation(old_path, new_path, claude_dir=claude_dir, dry_run=dry_run, no_backup=no_backup)
+        result = operation(old_path, new_path, claude_dir=claude_dir, dry_run=dry_run, no_backup=no_backup, merge=merge)
         print(_c("Done!", GREEN, BOLD))
         print(result.summary())
     except MoveError as e:

@@ -64,6 +64,16 @@ claudepath mv ~/old/path ~/new/path --dry-run
 claudepath list
 ```
 
+### Merge sessions when destination already has Claude data
+
+If you opened Claude Code at the new location before running `claudepath remap`, Claude Code will have already created a new project directory there. Use `--merge` to combine the sessions from both directories:
+
+```bash
+claudepath remap ~/old/path ~/new/path --merge
+```
+
+Without `--merge`, claudepath will fail with a clear error suggesting you add the flag.
+
 ### Full help
 
 ```bash
@@ -90,6 +100,7 @@ claudepath mv --help
 | `--dry-run` | Preview all changes without writing anything |
 | `--no-backup` | Skip creating a backup before modifying files |
 | `--yes` / `-y` | Skip the confirmation prompt |
+| `--merge` | Merge sessions when destination already has Claude data |
 | `--claude-dir <path>` | Override the Claude data directory (default: `~/.claude`) |
 
 ## Backup & Rollback
@@ -103,6 +114,7 @@ By default, claudepath creates a backup before making any changes:
 The backup includes:
 - The full project data directory (`~/.claude/projects/{encoded}/`)
 - `~/.claude/history.jsonl`
+- When using `--merge`: both the source and destination project directories
 
 If any step fails, claudepath automatically restores from the backup. Use `--no-backup` only if you already have your own backup or want to skip the extra time.
 

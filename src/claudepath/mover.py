@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 from claudepath.backup import create_backup, get_backup_base, restore_backup
 from claudepath.encoder import encode_path
 from claudepath.scanner import find_claude_dir, find_project_dir
-from claudepath.updaters import update_history, update_jsonl_files, update_sessions_index
+from claudepath.updaters import merge_sessions_index, update_history, update_jsonl_files, update_sessions_index
 
 
 class MoveError(Exception):
@@ -22,6 +22,7 @@ class MoveResult:
 
     def __init__(self):
         self.project_dir_renamed = False
+        self.sessions_merged = 0
         self.sessions_index_updated = 0
         self.jsonl_files_updated = 0
         self.jsonl_lines_changed = 0
@@ -34,6 +35,10 @@ class MoveResult:
         lines = []
         if self.project_dir_renamed:
             lines.append(f"{prefix}renamed project directory in ~/.claude/projects/")
+        if self.sessions_merged:
+            lines.append(
+                f"{prefix}merged {self.sessions_merged} session(s) from old directory into new"
+            )
         if self.sessions_index_updated:
             lines.append(f"{prefix}updated sessions-index.json")
         if self.jsonl_files_updated:
@@ -52,12 +57,40 @@ class MoveResult:
         return "\n".join(f"  - {l}" for l in lines)
 
 
+def _merge_project_dirs(src: Path, dst: Path, dry_run: bool) -> int:
+    """Copy all files from src into dst, skipping sessions-index.json.
+
+    sessions-index.json is handled separately by merge_sessions_index() before
+    this function is called, so we must not overwrite the merged result.
+
+    Returns the number of .jsonl files copied from src.
+    """
+    src_jsonl = list(src.rglob("*.jsonl"))
+    if dry_run:
+        return len(src_jsonl)
+
+    for item in src.rglob("*"):
+        if item.name == "sessions-index.json":
+            continue
+        relative = item.relative_to(src)
+        dest_item = dst / relative
+        if item.is_dir():
+            dest_item.mkdir(parents=True, exist_ok=True)
+        else:
+            dest_item.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(item), str(dest_item))
+
+    shutil.rmtree(str(src))
+    return len(src_jsonl)
+
+
 def _prepare_operation(
     old_path: str,
     new_path: str,
     claude_dir: Optional[Path],
     dry_run: bool,
     no_backup: bool,
+    merge: bool = False,
 ) -> Tuple[MoveResult, Optional[Path], Path, Path, str]:
     """Resolve paths, initialize result, and create backup if needed.
 
@@ -76,7 +109,8 @@ def _prepare_operation(
 
     if project_dir and not dry_run and not no_backup:
         backup_base = get_backup_base(claude_dir)
-        result.backup_path = create_backup(project_dir, history_path, backup_base)
+        extra_dir = new_project_dir if (merge and new_project_dir.exists()) else None
+        result.backup_path = create_backup(project_dir, history_path, backup_base, extra_dir=extra_dir)
 
     return result, project_dir, new_project_dir, history_path, new_encoded
 
@@ -87,6 +121,7 @@ def move_project(
     claude_dir: Optional[Path] = None,
     dry_run: bool = False,
     no_backup: bool = False,
+    merge: bool = False,
 ) -> MoveResult:
     """Move a project directory and update all Claude Code references.
 
@@ -95,7 +130,7 @@ def move_project(
     2. Find encoded project dir in ~/.claude/projects/
     3. Create backup (unless --no-backup)
     4. Move the actual project directory on disk
-    5. Rename the encoded project dir
+    5. Rename (or merge) the encoded project dir
     6. Update sessions-index.json
     7. Update all .jsonl session files
     8. Update history.jsonl
@@ -121,7 +156,7 @@ def move_project(
         )
 
     result, project_dir, new_project_dir, history_path, new_encoded = _prepare_operation(
-        old_path, new_path, claude_dir, dry_run, no_backup
+        old_path, new_path, claude_dir, dry_run, no_backup, merge=merge
     )
 
     try:
@@ -131,10 +166,24 @@ def move_project(
                 shutil.rmtree(new_dir)
             shutil.move(str(old_dir), str(new_dir))
 
-        # Rename the encoded project dir in ~/.claude/projects/
+        # Rename or merge the encoded project dir in ~/.claude/projects/
         if project_dir and project_dir.exists():
-            if not dry_run:
-                os.rename(project_dir, new_project_dir)
+            if new_project_dir.exists():
+                if not merge:
+                    raise MoveError(
+                        f"Destination Claude data directory already exists: {new_project_dir}\n"
+                        "Use --merge to combine sessions from both directories."
+                    )
+                # Merge: combine src sessions into dst, then update paths
+                src_index = project_dir / "sessions-index.json"
+                dst_index = new_project_dir / "sessions-index.json"
+                result.sessions_merged = merge_sessions_index(
+                    dst_index, src_index, old_path, new_path, new_encoded, dry_run=dry_run
+                )
+                _merge_project_dirs(project_dir, new_project_dir, dry_run)
+            else:
+                if not dry_run:
+                    os.rename(project_dir, new_project_dir)
             result.project_dir_renamed = True
             working_project_dir = new_project_dir
         else:
@@ -157,6 +206,8 @@ def move_project(
             # Also put the real directory back if it was moved
             if new_dir.exists() and not old_dir.exists():
                 shutil.move(str(new_dir), str(old_dir))
+        if isinstance(e, MoveError):
+            raise
         raise MoveError(f"Move failed: {e}\nChanges have been rolled back.") from e
 
     return result
@@ -168,6 +219,7 @@ def remap_project(
     claude_dir: Optional[Path] = None,
     dry_run: bool = False,
     no_backup: bool = False,
+    merge: bool = False,
 ) -> MoveResult:
     """Remap Claude Code references after a project was already moved manually.
 
@@ -189,13 +241,27 @@ def remap_project(
         )
 
     result, project_dir, new_project_dir, history_path, new_encoded = _prepare_operation(
-        old_path, new_path, claude_dir, dry_run, no_backup
+        old_path, new_path, claude_dir, dry_run, no_backup, merge=merge
     )
 
     try:
         if project_dir and project_dir.exists():
-            if not dry_run:
-                os.rename(project_dir, new_project_dir)
+            if new_project_dir.exists():
+                if not merge:
+                    raise MoveError(
+                        f"Destination Claude data directory already exists: {new_project_dir}\n"
+                        "Use --merge to combine sessions from both directories."
+                    )
+                # Merge: combine src sessions into dst, then update paths
+                src_index = project_dir / "sessions-index.json"
+                dst_index = new_project_dir / "sessions-index.json"
+                result.sessions_merged = merge_sessions_index(
+                    dst_index, src_index, old_path, new_path, new_encoded, dry_run=dry_run
+                )
+                _merge_project_dirs(project_dir, new_project_dir, dry_run)
+            else:
+                if not dry_run:
+                    os.rename(project_dir, new_project_dir)
             result.project_dir_renamed = True
             working_project_dir = new_project_dir
         else:
@@ -214,6 +280,8 @@ def remap_project(
     except Exception as e:
         if result.backup_path and not dry_run:
             restore_backup(result.backup_path)
+        if isinstance(e, MoveError):
+            raise
         raise MoveError(f"Remap failed: {e}\nChanges have been rolled back.") from e
 
     return result

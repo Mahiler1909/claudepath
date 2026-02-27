@@ -106,6 +106,58 @@ def update_history(
     return _replace_in_file(history_path, old_path, new_path, dry_run)
 
 
+def merge_sessions_index(
+    dst_index: Path,
+    src_index: Path,
+    old_path: str,
+    new_path: str,
+    new_encoded: str,
+    dry_run: bool = False,
+) -> int:
+    """Merge entries from src sessions-index.json into dst sessions-index.json.
+
+    Entries from src are updated (old_path → new_path) before being appended.
+    Entries that already exist in dst (by sessionId) are skipped.
+
+    Returns the number of entries merged from src into dst.
+    """
+    if not dst_index.exists() or not src_index.exists():
+        return 0
+
+    try:
+        dst_data = json.loads(dst_index.read_text(encoding="utf-8"))
+        src_data = json.loads(src_index.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return 0
+
+    old_encoded = encode_path(old_path)
+    existing_ids = {e.get("sessionId") for e in dst_data.get("entries", [])}
+
+    merged = 0
+    for entry in src_data.get("entries", []):
+        if entry.get("sessionId") in existing_ids:
+            continue
+        # Update paths in the entry
+        if entry.get("projectPath") == old_path:
+            entry["projectPath"] = new_path
+        full_path = entry.get("fullPath", "")
+        if old_encoded in full_path:
+            entry["fullPath"] = full_path.replace(old_encoded, new_encoded, 1)
+        dst_data.setdefault("entries", []).append(entry)
+        merged += 1
+
+    # Ensure originalPath is updated
+    if dst_data.get("originalPath") == old_path:
+        dst_data["originalPath"] = new_path
+
+    if merged > 0 and not dry_run:
+        dst_index.write_text(
+            json.dumps(dst_data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+    return merged
+
+
 def _replace_in_file(file_path: Path, old: str, new: str, dry_run: bool) -> int:
     """Replace all occurrences of `old` with `new` in a file, line by line.
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0] - 2026-02-27
+
+### Added
+- `--merge` flag for `mv` and `remap`: when the destination Claude data directory already exists (because Claude Code was opened at the new location before running claudepath), `--merge` combines sessions from both directories instead of failing with "Directory not empty"
+- Backup now includes both source and destination directories when `--merge` is used, enabling full rollback
+
+### Fixed
+- `remap` and `mv` now raise a clear error with a `--merge` hint when the destination Claude data directory already exists, instead of crashing with an opaque `Errno 66` message
+
 ## [0.3.0] - 2026-02-26
 
 ### Added
