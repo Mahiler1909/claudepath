@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.0.0] - 2026-02-27
+
+### Added
+- `claudepath restore` command: list and restore from automatic backups (`--list`, `<timestamp>`)
+- `claudepath update` command: self-update with auto-detection of install method (Homebrew, pipx, or pip)
+- `--verbose` / `-v` flag for `mv` and `remap`: show detailed file-by-file processing output
+- Per-command `--help` support (e.g., `claudepath mv --help`)
+- "Did you mean?" suggestions for mistyped commands (e.g., `mov` → `mv`)
+- `NO_COLOR` and `FORCE_COLOR` environment variable support (standard convention)
+- `list` command now shows project existence status on disk (✓ on disk / ✗ orphaned)
+- Better confirmation prompts showing preview of what will change (file counts, backup info)
+- Improved error messages with usage hints and suggestions
+- Warning when Claude Code may be actively using the project
+
+### Fixed
+- **Critical:** JSONL path replacement is now JSON-aware — prevents substring corruption (e.g., `/Users/foo` no longer incorrectly modifies `/Users/foobar`)
+- **Critical:** Atomic file writes now properly propagate exceptions instead of silently returning success
+- **Critical:** Backup restore uses atomic rename-aside strategy — if copy fails, original directory is preserved
+- Merge now warns when duplicate session IDs are skipped instead of silently discarding them
+- "Nothing to update" message now suggests `claudepath list` to help users find tracked projects
+
 ## [0.4.0] - 2026-02-27
 
 ### Added

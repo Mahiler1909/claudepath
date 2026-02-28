@@ -64,6 +64,32 @@ claudepath mv ~/old/path ~/new/path --dry-run
 claudepath list
 ```
 
+### Update claudepath
+
+Update to the latest version — auto-detects whether you installed via Homebrew or pipx:
+
+```bash
+claudepath update
+```
+
+You can also force a specific method:
+
+```bash
+claudepath update --brew
+claudepath update --pipx
+claudepath update --pip
+```
+
+### Restore from backup
+
+List and restore from automatic backups:
+
+```bash
+claudepath restore --list       # see available backups
+claudepath restore              # restore the latest backup
+claudepath restore 20260227_145300  # restore a specific backup
+```
+
 ### Merge sessions when destination already has Claude data
 
 If you opened Claude Code at the new location before running `claudepath remap`, Claude Code will have already created a new project directory there. Use `--merge` to combine the sessions from both directories:
@@ -101,7 +127,15 @@ claudepath mv --help
 | `--no-backup` | Skip creating a backup before modifying files |
 | `--yes` / `-y` | Skip the confirmation prompt |
 | `--merge` | Merge sessions when destination already has Claude data |
+| `--verbose` / `-v` | Show detailed file-by-file processing output |
 | `--claude-dir <path>` | Override the Claude data directory (default: `~/.claude`) |
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `NO_COLOR` | Disable colored output (set to any value) |
+| `FORCE_COLOR` | Force colored output even when not a TTY |
 
 ## Backup & Rollback
 

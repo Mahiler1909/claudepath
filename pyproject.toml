@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "claudepath"
-version = "0.4.0"
+version = "1.0.0"
 description = "Move or rename Claude Code projects without losing session history and context"
 readme = "README.md"
 license = { text = "MIT" }
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["claude", "claude-code", "anthropic", "cli", "project", "move"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",

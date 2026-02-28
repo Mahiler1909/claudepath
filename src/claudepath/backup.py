@@ -7,10 +7,11 @@ If any step fails, the backup can be restored automatically.
 Backups are stored in: ~/.claude/backups/claudepath/{timestamp}/
 """
 
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Union
+from typing import Dict, List, Optional
 
 
 def create_backup(
@@ -82,26 +83,16 @@ def restore_backup(backup_dir: Path) -> bool:
 
     success = True
 
-    # Restore project directory
+    # Restore project directory (atomic: rename-aside, copy, cleanup)
     backup_project = backup_dir / "project_dir"
     if backup_project.exists() and project_dir:
-        if project_dir.exists():
-            shutil.rmtree(project_dir)
-        try:
-            shutil.copytree(str(backup_project), str(project_dir))
-        except OSError:
-            success = False
+        success = _atomic_restore_dir(backup_project, project_dir) and success
 
     # Restore merge target directory (if backed up during --merge)
     merge_target_dir = Path(config.get("merge_target_dir", ""))
     backup_merge_target = backup_dir / "merge_target_dir"
     if backup_merge_target.exists() and merge_target_dir and str(merge_target_dir) != ".":
-        if merge_target_dir.exists():
-            shutil.rmtree(merge_target_dir)
-        try:
-            shutil.copytree(str(backup_merge_target), str(merge_target_dir))
-        except OSError:
-            success = False
+        success = _atomic_restore_dir(backup_merge_target, merge_target_dir) and success
 
     # Restore history.jsonl
     backup_history = backup_dir / "history.jsonl"
@@ -112,6 +103,32 @@ def restore_backup(backup_dir: Path) -> bool:
             success = False
 
     return success
+
+
+def _atomic_restore_dir(backup_src: Path, target: Path) -> bool:
+    """Atomically restore a directory from backup using rename-aside strategy.
+
+    If the target exists, it's renamed aside first. If the copy fails, the
+    original is renamed back, preventing data loss.
+    """
+    temp_old = None
+    try:
+        if target.exists():
+            temp_old = target.with_name(target.name + ".claudepath-old")
+            # Clean up any stale temp from a previous failed restore
+            if temp_old.exists():
+                shutil.rmtree(temp_old)
+            os.rename(target, temp_old)
+        shutil.copytree(str(backup_src), str(target))
+        # Copy succeeded — clean up the old directory
+        if temp_old and temp_old.exists():
+            shutil.rmtree(temp_old)
+        return True
+    except OSError:
+        # Restore the original directory if we renamed it aside
+        if temp_old and temp_old.exists() and not target.exists():
+            os.rename(temp_old, target)
+        return False
 
 
 def get_backup_base(claude_dir: Path) -> Path:
@@ -129,3 +146,43 @@ def find_latest_backup(backup_base: Path) -> Optional[Path]:
         reverse=True,
     )
     return backups[0] if backups else None
+
+
+def list_backups(backup_base: Path) -> List[Dict]:
+    """List all backups with metadata parsed from their manifests.
+
+    Returns a list of dicts sorted newest-first with keys:
+        - timestamp: the directory name (e.g. "20260227_145300")
+        - path: full Path to the backup directory
+        - project_dir: original project directory that was backed up
+        - has_merge_target: whether this backup includes a merge target
+    """
+    if not backup_base.exists():
+        return []
+
+    results = []
+    for entry in sorted(backup_base.iterdir(), reverse=True):
+        if not entry.is_dir():
+            continue
+        manifest = entry / "manifest.txt"
+        info: Dict = {
+            "timestamp": entry.name,
+            "path": entry,
+            "project_dir": "",
+            "has_merge_target": False,
+        }
+        if manifest.exists():
+            try:
+                for line in manifest.read_text(encoding="utf-8").splitlines():
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip()
+                        if k == "project_dir":
+                            info["project_dir"] = v
+                        elif k == "merge_target_dir":
+                            info["has_merge_target"] = True
+            except OSError:
+                pass
+        results.append(info)
+
+    return results
