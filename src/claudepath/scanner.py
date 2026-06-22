@@ -33,27 +33,39 @@ def find_project_dir(claude_dir: Path, project_path: str) -> Optional[Path]:
     if candidate.exists():
         return candidate
 
-    # Fallback: scan sessions-index.json files for matching originalPath or projectPath
+    # Fallback: scan all project directories using the same strategies as list_projects
     normalized = str(Path(project_path).resolve())
     for entry in projects_dir.iterdir():
         if not entry.is_dir():
             continue
+
+        # Check sessions-index.json for originalPath or projectPath
         index_file = entry / "sessions-index.json"
-        if not index_file.exists():
-            continue
-        try:
-            data = json.loads(index_file.read_text(encoding="utf-8"))
-            original = data.get("originalPath", "")
-            if str(Path(original).resolve()) == normalized:
-                return entry
-            # Also check first entry's projectPath
-            entries = data.get("entries", [])
-            if entries:
-                pp = entries[0].get("projectPath", "")
-                if str(Path(pp).resolve()) == normalized:
+        if index_file.exists():
+            try:
+                data = json.loads(index_file.read_text(encoding="utf-8"))
+                original = data.get("originalPath", "")
+                if original and str(Path(original).resolve()) == normalized:
                     return entry
-        except (json.JSONDecodeError, OSError):
-            continue
+                entries = data.get("entries", [])
+                if entries:
+                    pp = entries[0].get("projectPath", "")
+                    if pp and str(Path(pp).resolve()) == normalized:
+                        return entry
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Check cwd field in .jsonl session files
+        jsonl_files = list(entry.glob("*.jsonl"))
+        if jsonl_files:
+            cwd = _read_cwd_from_jsonl(jsonl_files[0])
+            if cwd and str(Path(cwd).resolve()) == normalized:
+                return entry
+
+        # Decode the encoded directory name by probing the filesystem
+        decoded = _decode_encoded_name(entry.name)
+        if decoded and str(Path(decoded).resolve()) == normalized:
+            return entry
 
     return None
 
