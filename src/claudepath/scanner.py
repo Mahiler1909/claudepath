@@ -18,8 +18,8 @@ def find_project_dir(claude_dir: Path, project_path: str) -> Optional[Path]:
     """Find the encoded project directory in ~/.claude/projects/ for a given absolute path.
 
     Tries the computed encoded name first. Falls back to scanning sessions-index.json
-    files if the computed name doesn't match (handles edge cases like manually-moved
-    projects where originalPath diverged from the directory name).
+    files, then to reading the cwd field from .jsonl files (handles cases where
+    sessions-index.json is missing or corrupted).
 
     Returns the Path to the project dir, or None if not found.
     """
@@ -33,28 +33,60 @@ def find_project_dir(claude_dir: Path, project_path: str) -> Optional[Path]:
     if candidate.exists():
         return candidate
 
-    # Fallback: scan sessions-index.json files for matching originalPath or projectPath
+    # Fallback: scan each project dir for any signal pointing at project_path.
+    # First try sessions-index.json; if that's missing/invalid, probe a .jsonl cwd field.
     normalized = str(Path(project_path).resolve())
     for entry in projects_dir.iterdir():
         if not entry.is_dir():
             continue
-        index_file = entry / "sessions-index.json"
-        if not index_file.exists():
-            continue
-        try:
-            data = json.loads(index_file.read_text(encoding="utf-8"))
-            original = data.get("originalPath", "")
-            if str(Path(original).resolve()) == normalized:
-                return entry
-            # Also check first entry's projectPath
-            entries = data.get("entries", [])
-            if entries:
-                pp = entries[0].get("projectPath", "")
-                if str(Path(pp).resolve()) == normalized:
-                    return entry
-        except (json.JSONDecodeError, OSError):
-            continue
 
+        matched_via_index = False
+        index_file = entry / "sessions-index.json"
+        if index_file.exists():
+            try:
+                data = json.loads(index_file.read_text(encoding="utf-8"))
+                matched_via_index = True
+                original = data.get("originalPath", "")
+                if original and str(Path(original).resolve()) == normalized:
+                    return entry
+                entries = data.get("entries", [])
+                if entries:
+                    pp = entries[0].get("projectPath", "")
+                    if pp and str(Path(pp).resolve()) == normalized:
+                        return entry
+            except (json.JSONDecodeError, OSError):
+                matched_via_index = False
+
+        # If the index didn't resolve the path (missing, invalid, or null fields),
+        # peek at any .jsonl file's cwd — it always carries the real project path.
+        if not matched_via_index or _index_lacks_path(index_file):
+            cwd = _read_first_cwd_in_dir(entry)
+            if cwd and str(Path(cwd).resolve()) == normalized:
+                return entry
+
+    return None
+
+
+def _index_lacks_path(index_file: Path) -> bool:
+    """Return True if sessions-index.json has no usable originalPath/projectPath."""
+    if not index_file.exists():
+        return True
+    try:
+        data = json.loads(index_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return True
+    if data.get("originalPath"):
+        return False
+    entries = data.get("entries", [])
+    return not (entries and entries[0].get("projectPath"))
+
+
+def _read_first_cwd_in_dir(project_dir: Path) -> Optional[str]:
+    """Return the cwd from the first .jsonl that has one, or None."""
+    for jsonl_file in project_dir.glob("*.jsonl"):
+        cwd = _read_cwd_from_jsonl(jsonl_file)
+        if cwd:
+            return cwd
     return None
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from claudepath.encoder import encode_path
 from claudepath.mover import MoveError, move_project, remap_project
 
 
@@ -29,7 +30,7 @@ def make_test_env(tmp_path: Path):
     # Claude data dir
     claude_dir = tmp_path / ".claude"
     old_abs = str(old_project)
-    old_encoded = old_abs.replace("/", "-")
+    old_encoded = encode_path(old_abs)
 
     project_data_dir = claude_dir / "projects" / old_encoded
     project_data_dir.mkdir(parents=True)
@@ -109,19 +110,19 @@ def test_move_project_moves_directory(tmp_path):
 def test_move_project_renames_claude_project_dir(tmp_path):
     old_project, projects_root, claude_dir = make_test_env(tmp_path)
     new_project = projects_root / NEW_PATH_NAME
-    new_encoded = str(new_project).replace("/", "-")
+    new_encoded = encode_path(str(new_project))
 
     move_project(str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True)
 
     assert (claude_dir / "projects" / new_encoded).exists()
-    old_encoded = str(old_project).replace("/", "-")
+    old_encoded = encode_path(str(old_project))
     assert not (claude_dir / "projects" / old_encoded).exists()
 
 
 def test_move_project_updates_sessions_index(tmp_path):
     old_project, projects_root, claude_dir = make_test_env(tmp_path)
     new_project = projects_root / NEW_PATH_NAME
-    new_encoded = str(new_project).replace("/", "-")
+    new_encoded = encode_path(str(new_project))
 
     move_project(str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True)
 
@@ -135,7 +136,7 @@ def test_move_project_updates_sessions_index(tmp_path):
 def test_move_project_updates_jsonl_cwd(tmp_path):
     old_project, projects_root, claude_dir = make_test_env(tmp_path)
     new_project = projects_root / NEW_PATH_NAME
-    new_encoded = str(new_project).replace("/", "-")
+    new_encoded = encode_path(str(new_project))
     new_abs = str(new_project)
 
     move_project(str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True)
@@ -149,7 +150,7 @@ def test_move_project_updates_jsonl_cwd(tmp_path):
 def test_move_project_updates_subagent_jsonl(tmp_path):
     old_project, projects_root, claude_dir = make_test_env(tmp_path)
     new_project = projects_root / NEW_PATH_NAME
-    new_encoded = str(new_project).replace("/", "-")
+    new_encoded = encode_path(str(new_project))
 
     move_project(str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True)
 
@@ -192,7 +193,7 @@ def test_move_project_dry_run_no_changes(tmp_path):
     new_project = projects_root / NEW_PATH_NAME
 
     # Capture original state
-    old_encoded = str(old_project).replace("/", "-")
+    old_encoded = encode_path(str(old_project))
     original_index = (claude_dir / "projects" / old_encoded / "sessions-index.json").read_text()
     original_session = (claude_dir / "projects" / old_encoded / "sess-001.jsonl").read_text()
     original_history = (claude_dir / "history.jsonl").read_text()
@@ -244,7 +245,7 @@ def test_remap_project_updates_references_without_moving(tmp_path):
     assert new_project.exists()
 
     # Claude data should be updated
-    new_encoded = str(new_project).replace("/", "-")
+    new_encoded = encode_path(str(new_project))
     assert (claude_dir / "projects" / new_encoded).exists()
     data = json.loads((claude_dir / "projects" / new_encoded / "sessions-index.json").read_text())
     assert data["originalPath"] == str(new_project)
@@ -291,8 +292,8 @@ def make_merge_test_env(tmp_path: Path):
     claude_dir = tmp_path / ".claude"
     old_abs = str(old_project)
     new_abs = str(new_project)
-    old_encoded = old_abs.replace("/", "-")
-    new_encoded = new_abs.replace("/", "-")
+    old_encoded = encode_path(old_abs)
+    new_encoded = encode_path(new_abs)
 
     # Old encoded dir — historical sessions
     old_data_dir = claude_dir / "projects" / old_encoded
@@ -359,7 +360,7 @@ def make_merge_test_env(tmp_path: Path):
 
 def test_remap_merge_copies_sessions(tmp_path):
     old_project, new_project, claude_dir = make_merge_test_env(tmp_path)
-    new_encoded = str(new_project).replace("/", "-")
+    new_encoded = encode_path(str(new_project))
 
     remap_project(str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True, merge=True)
 
@@ -370,7 +371,7 @@ def test_remap_merge_copies_sessions(tmp_path):
 
 def test_remap_merge_combines_sessions_index(tmp_path):
     old_project, new_project, claude_dir = make_merge_test_env(tmp_path)
-    new_encoded = str(new_project).replace("/", "-")
+    new_encoded = encode_path(str(new_project))
 
     remap_project(str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True, merge=True)
 
@@ -383,7 +384,7 @@ def test_remap_merge_combines_sessions_index(tmp_path):
 
 def test_remap_merge_updates_old_paths(tmp_path):
     old_project, new_project, claude_dir = make_merge_test_env(tmp_path)
-    new_encoded = str(new_project).replace("/", "-")
+    new_encoded = encode_path(str(new_project))
 
     remap_project(str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True, merge=True)
 
@@ -396,7 +397,7 @@ def test_remap_merge_updates_old_paths(tmp_path):
 
 def test_remap_merge_removes_old_dir(tmp_path):
     old_project, new_project, claude_dir = make_merge_test_env(tmp_path)
-    old_encoded = str(old_project).replace("/", "-")
+    old_encoded = encode_path(str(old_project))
 
     remap_project(str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True, merge=True)
 
@@ -418,7 +419,7 @@ def test_move_merge(tmp_path):
 
     # Pre-create the new encoded dir to simulate the conflict
     new_abs = str(new_project)
-    new_encoded = new_abs.replace("/", "-")
+    new_encoded = encode_path(new_abs)
     new_data_dir = claude_dir / "projects" / new_encoded
     new_data_dir.mkdir(parents=True)
     existing_index = {
@@ -454,8 +455,8 @@ def test_move_merge(tmp_path):
 
 def test_remap_merge_dry_run(tmp_path):
     old_project, new_project, claude_dir = make_merge_test_env(tmp_path)
-    old_encoded = str(old_project).replace("/", "-")
-    new_encoded = str(new_project).replace("/", "-")
+    old_encoded = encode_path(str(old_project))
+    new_encoded = encode_path(str(new_project))
 
     original_old_index = (claude_dir / "projects" / old_encoded / "sessions-index.json").read_text()
     original_new_index = (claude_dir / "projects" / new_encoded / "sessions-index.json").read_text()

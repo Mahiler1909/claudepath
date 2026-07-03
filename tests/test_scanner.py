@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from claudepath.encoder import encode_path
 from claudepath.scanner import find_project_dir, list_projects
 
 
@@ -12,7 +13,7 @@ def make_claude_dir(tmp_path: Path, project_path: str = OLD_PATH) -> tuple:
     """Create a minimal ~/.claude directory structure for testing."""
     claude_dir = tmp_path / ".claude"
     projects_dir = claude_dir / "projects"
-    encoded = project_path.replace("/", "-")
+    encoded = encode_path(project_path)
     project_dir = projects_dir / encoded
     project_dir.mkdir(parents=True)
 
@@ -64,6 +65,47 @@ def test_find_project_dir_fallback_sessions_index(tmp_path):
 
     found = find_project_dir(claude_dir, OLD_PATH)
     assert found == project_dir
+
+
+def test_find_project_dir_fallback_jsonl_cwd_when_index_invalid(tmp_path):
+    """If sessions-index.json is corrupted or empty, fall back to cwd in a .jsonl."""
+    claude_dir = tmp_path / ".claude"
+    projects_dir = claude_dir / "projects"
+    wrong_encoded = "-Users-foo-stale-name"
+    project_dir = projects_dir / wrong_encoded
+    project_dir.mkdir(parents=True)
+    # Invalid JSON in the index — must not cause find_project_dir to give up
+    (project_dir / "sessions-index.json").write_text("")
+    (project_dir / "sess.jsonl").write_text(
+        json.dumps({"type": "user", "cwd": OLD_PATH}) + "\n"
+    )
+
+    found = find_project_dir(claude_dir, OLD_PATH)
+    assert found == project_dir
+
+
+def test_find_project_dir_fallback_jsonl_cwd_when_index_missing(tmp_path):
+    """No sessions-index.json at all — cwd from a .jsonl should still find the project."""
+    claude_dir = tmp_path / ".claude"
+    projects_dir = claude_dir / "projects"
+    wrong_encoded = "-orphan-dir"
+    project_dir = projects_dir / wrong_encoded
+    project_dir.mkdir(parents=True)
+    (project_dir / "sess.jsonl").write_text(
+        json.dumps({"type": "user", "cwd": OLD_PATH}) + "\n"
+    )
+
+    found = find_project_dir(claude_dir, OLD_PATH)
+    assert found == project_dir
+
+
+def test_find_project_dir_path_with_dots(tmp_path):
+    """A path containing '.' resolves via the standard encoding (dots → '-')."""
+    path = "/Users/foo/local.tmp/proj"
+    claude_dir, project_dir = make_claude_dir(tmp_path, project_path=path)
+    found = find_project_dir(claude_dir, path)
+    assert found == project_dir
+    assert project_dir.name == "-Users-foo-local-tmp-proj"
 
 
 def test_find_project_dir_not_found(tmp_path):
