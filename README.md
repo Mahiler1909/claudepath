@@ -156,10 +156,11 @@ If any step fails, claudepath automatically restores from the backup. Use `--no-
 
 ## How Claude Code encodes paths
 
-Claude Code stores project data in `~/.claude/projects/` using an encoded directory name: every `/` in the absolute path is replaced with `-`.
+Claude Code stores project data in `~/.claude/projects/` using an encoded directory name: every character that isn't an ASCII letter or digit (`/`, `.`, `_`, `~`, spaces, non-ASCII, …) is replaced with `-`. Names longer than 200 characters are truncated and suffixed with a base-36 hash of the original path.
 
 ```
-/Users/foo/my-project  →  -Users-foo-my-project
+/Users/foo/my-project      →  -Users-foo-my-project
+/Users/foo/local.tmp/proj  →  -Users-foo-local-tmp-proj
 ```
 
 This means moving `/Users/foo/old-name` to `/Users/foo/new-name` requires:

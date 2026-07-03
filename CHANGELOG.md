@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2] - 2026-07-03
+
+### Fixed
+- **Path encoding now matches Claude Code's actual algorithm** ([#2](https://github.com/Mahiler1909/claudepath/issues/2), [#4](https://github.com/Mahiler1909/claudepath/pull/4) by @gmasse): every non-ASCII-alphanumeric character (`.`, `_`, `~`, spaces, non-ASCII, …) is replaced with `-`, not just `/`. Encoded names longer than 200 chars are truncated and suffixed with a base-36 hash. Previously, paths containing these characters were silently missed by `mv` and `remap`
+- `find_project_dir` now falls back to reading the `cwd` field from `.jsonl` files when `sessions-index.json` is missing or corrupted ([#4](https://github.com/Mahiler1909/claudepath/pull/4))
+- File mtimes are preserved when rewriting session and history files ([#3](https://github.com/Mahiler1909/claudepath/pull/3) by @johnowennixon) — Claude Code's project list sorts by session mtime, so rewrites no longer reorder every touched session to the top
+
 ## [1.1.1] - 2026-03-05
 
 ### Improved
