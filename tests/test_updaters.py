@@ -1,7 +1,14 @@
 import json
+import os
 from pathlib import Path
 
-from claudepath.updaters import update_history, update_jsonl_files, update_sessions_index, update_usage_data
+from claudepath.updaters import (
+    merge_sessions_index,
+    update_history,
+    update_jsonl_files,
+    update_sessions_index,
+    update_usage_data,
+)
 
 
 OLD_PATH = "/Users/foo/old-project"
@@ -358,3 +365,93 @@ def test_update_usage_data_prefix_match(tmp_path):
     assert count == 1
     data = json.loads((tmp_path / "usage-data" / "session-meta" / "sess-sub.json").read_text())
     assert data["project_path"] == NEW_PATH + "/subdir"
+
+
+# ─── mtime preservation across writes ─────────────────────────────────────
+
+# A timestamp well in the past, picked so a real write would visibly change
+# the file's mtime if the preservation logic failed. (seconds since epoch)
+OLD_MTIME_NS = 1_577_836_800_000_000_000  # 2020-01-01 00:00:00 UTC
+
+
+def _set_mtime(path: Path) -> int:
+    """Set both atime and mtime to OLD_MTIME_NS and return that value."""
+    os.utime(path, ns=(OLD_MTIME_NS, OLD_MTIME_NS))
+    return OLD_MTIME_NS
+
+
+def test_update_jsonl_files_preserves_mtime(tmp_path):
+    session = tmp_path / "abc.jsonl"
+    session.write_text(json.dumps({"cwd": OLD_PATH}) + "\n")
+    _set_mtime(session)
+
+    files, _ = update_jsonl_files(tmp_path, OLD_PATH, NEW_PATH)
+    assert files == 1
+    assert json.loads(session.read_text())["cwd"] == NEW_PATH
+    assert session.stat().st_mtime_ns == OLD_MTIME_NS
+
+
+def test_update_history_preserves_mtime(tmp_path):
+    history = tmp_path / "history.jsonl"
+    history.write_text(json.dumps({"project": OLD_PATH}) + "\n")
+    _set_mtime(history)
+
+    count = update_history(history, OLD_PATH, NEW_PATH)
+    assert count == 1
+    assert json.loads(history.read_text())["project"] == NEW_PATH
+    assert history.stat().st_mtime_ns == OLD_MTIME_NS
+
+
+def test_update_sessions_index_preserves_mtime(tmp_path):
+    index_path = make_sessions_index(tmp_path)
+    _set_mtime(index_path)
+
+    update_sessions_index(index_path, OLD_PATH, NEW_PATH, NEW_ENCODED)
+    assert index_path.stat().st_mtime_ns == OLD_MTIME_NS
+
+
+def test_update_usage_data_preserves_mtime(tmp_path):
+    f = make_usage_data(tmp_path, OLD_PATH)
+    _set_mtime(f)
+
+    update_usage_data(tmp_path, OLD_PATH, NEW_PATH)
+    assert f.stat().st_mtime_ns == OLD_MTIME_NS
+
+
+def test_merge_sessions_index_preserves_dst_mtime(tmp_path):
+    dst_dir = tmp_path / "dst"
+    src_dir = tmp_path / "src"
+    dst_dir.mkdir()
+    src_dir.mkdir()
+
+    dst_data = {
+        "version": 1,
+        "originalPath": NEW_PATH,
+        "entries": [
+            {
+                "sessionId": "already-here",
+                "projectPath": NEW_PATH,
+                "fullPath": f"{CLAUDE_DIR}/projects/{NEW_ENCODED}/already-here.jsonl",
+            }
+        ],
+    }
+    src_data = {
+        "version": 1,
+        "originalPath": OLD_PATH,
+        "entries": [
+            {
+                "sessionId": "incoming",
+                "projectPath": OLD_PATH,
+                "fullPath": f"{CLAUDE_DIR}/projects/{OLD_ENCODED}/incoming.jsonl",
+            }
+        ],
+    }
+    dst_index = dst_dir / "sessions-index.json"
+    src_index = src_dir / "sessions-index.json"
+    dst_index.write_text(json.dumps(dst_data, indent=2))
+    src_index.write_text(json.dumps(src_data, indent=2))
+    _set_mtime(dst_index)
+
+    merged = merge_sessions_index(dst_index, src_index, OLD_PATH, NEW_PATH, NEW_ENCODED)
+    assert merged == 1
+    assert dst_index.stat().st_mtime_ns == OLD_MTIME_NS

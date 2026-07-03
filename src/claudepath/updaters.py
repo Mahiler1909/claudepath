@@ -9,10 +9,35 @@ import json
 import os
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Tuple
+from typing import Generator, Tuple
 
 from claudepath.encoder import encode_path
+
+
+@contextmanager
+def preserve_mtime(file_path: Path) -> Generator[None, None, None]:
+    """Preserve atime/mtime of `file_path` across a write.
+
+    Captures times on entry (if the file exists) and restores them on exit. If
+    the file did not exist on entry, nothing is restored — a freshly created
+    file is left with its natural creation time. Restore failures are
+    swallowed so mtime preservation can never break the underlying write.
+    """
+    try:
+        st = os.stat(file_path)
+        times_ns = (st.st_atime_ns, st.st_mtime_ns)
+    except FileNotFoundError:
+        times_ns = None
+    try:
+        yield
+    finally:
+        if times_ns is not None:
+            try:
+                os.utime(file_path, ns=times_ns)
+            except OSError:
+                pass
 
 
 def update_usage_data(
@@ -44,9 +69,10 @@ def update_usage_data(
             if verbose:
                 print(f"    {json_file.name}: updated project_path", file=sys.stderr)
             if not dry_run:
-                json_file.write_text(
-                    json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8"
-                )
+                with preserve_mtime(json_file):
+                    json_file.write_text(
+                        json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8"
+                    )
 
     return files_updated
 
@@ -102,9 +128,10 @@ def update_sessions_index(
         print(f"    {index_path.name}: updated {', '.join(fields)}", file=sys.stderr)
 
     if changed and not dry_run:
-        index_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        with preserve_mtime(index_path):
+            index_path.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
 
     return 1 if changed else 0
 
@@ -209,9 +236,10 @@ def merge_sessions_index(
         dst_data["originalPath"] = new_path
 
     if merged > 0 and not dry_run:
-        dst_index.write_text(
-            json.dumps(dst_data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        with preserve_mtime(dst_index):
+            dst_index.write_text(
+                json.dumps(dst_data, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
 
     return merged
 
@@ -280,7 +308,15 @@ def replace_in_file(file_path: Path, old: str, new: str, dry_run: bool) -> int:
             lines_changed += 1
 
     if lines_changed > 0 and not dry_run:
-        # Write atomically: write to temp file in same dir, then rename
+        # Write atomically: write to temp file in same dir, then rename.
+        # Capture the original (a)mtime so the post-rename file keeps the
+        # session's true last-activity timestamp — Claude Code's project list
+        # sorts on it, so a fresh "now" mtime would reorder every session.
+        try:
+            st = os.stat(file_path)
+            times_ns = (st.st_atime_ns, st.st_mtime_ns)
+        except FileNotFoundError:
+            times_ns = None
         dir_path = file_path.parent
         fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
         try:
@@ -290,5 +326,10 @@ def replace_in_file(file_path: Path, old: str, new: str, dry_run: bool) -> int:
         except OSError:
             os.unlink(tmp_path)
             raise
+        if times_ns is not None:
+            try:
+                os.utime(file_path, ns=times_ns)
+            except OSError:
+                pass
 
     return lines_changed
