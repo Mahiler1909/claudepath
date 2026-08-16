@@ -91,6 +91,19 @@ def make_test_env(tmp_path: Path):
         "input_tokens": 50,
     }, indent=4))
 
+    # .claude.json — sits alongside the .claude dir, keyed by absolute path
+    (tmp_path / ".claude.json").write_text(json.dumps({
+        "numStartups": 7,
+        "projects": {
+            old_abs: {
+                "hasTrustDialogAccepted": True,
+                "allowedTools": ["Bash(git *)"],
+                "mcpServers": {"backlog": {"command": "backlog-mcp"}},
+            },
+            "/other/path": {"hasTrustDialogAccepted": False},
+        },
+    }, indent=2))
+
     return old_project, projects_root, claude_dir
 
 
@@ -478,3 +491,83 @@ def test_remap_merge_backup_includes_both_dirs(tmp_path):
     assert result.backup_path is not None
     assert (result.backup_path / "project_dir").exists()
     assert (result.backup_path / "merge_target_dir").exists()
+
+
+# ─── .claude.json config ───────────────────────────────────────────────────
+
+def read_config(tmp_path: Path) -> dict:
+    return json.loads((tmp_path / ".claude.json").read_text())
+
+
+def test_move_project_moves_config_entry(tmp_path):
+    old_project, projects_root, claude_dir = make_test_env(tmp_path)
+    new_project = projects_root / NEW_PATH_NAME
+
+    result = move_project(
+        str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True
+    )
+    assert result.config_entries_moved == 1
+
+    projects = read_config(tmp_path)["projects"]
+    assert str(old_project) not in projects
+    assert projects[str(new_project)]["hasTrustDialogAccepted"] is True
+    assert projects[str(new_project)]["allowedTools"] == ["Bash(git *)"]
+    assert projects[str(new_project)]["mcpServers"] == {"backlog": {"command": "backlog-mcp"}}
+    assert projects["/other/path"] == {"hasTrustDialogAccepted": False}
+
+
+def test_remap_project_moves_config_entry(tmp_path):
+    old_project, projects_root, claude_dir = make_test_env(tmp_path)
+    new_project = projects_root / NEW_PATH_NAME
+    shutil.move(str(old_project), str(new_project))
+
+    result = remap_project(
+        str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True
+    )
+    assert result.config_entries_moved == 1
+    assert str(new_project) in read_config(tmp_path)["projects"]
+
+
+def test_move_project_dry_run_leaves_config_untouched(tmp_path):
+    old_project, projects_root, claude_dir = make_test_env(tmp_path)
+    new_project = projects_root / NEW_PATH_NAME
+    original = (tmp_path / ".claude.json").read_text()
+
+    result = move_project(
+        str(old_project), str(new_project), claude_dir=claude_dir, dry_run=True
+    )
+    assert result.config_entries_moved == 1
+    assert (tmp_path / ".claude.json").read_text() == original
+
+
+def test_move_project_summary_mentions_config(tmp_path):
+    old_project, projects_root, claude_dir = make_test_env(tmp_path)
+    new_project = projects_root / NEW_PATH_NAME
+
+    result = move_project(
+        str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True
+    )
+    assert ".claude.json" in result.summary()
+
+
+def test_move_project_without_config_file(tmp_path):
+    """A missing ~/.claude.json must not break the move."""
+    old_project, projects_root, claude_dir = make_test_env(tmp_path)
+    (tmp_path / ".claude.json").unlink()
+    new_project = projects_root / NEW_PATH_NAME
+
+    result = move_project(
+        str(old_project), str(new_project), claude_dir=claude_dir, no_backup=True
+    )
+    assert result.config_entries_moved == 0
+    assert new_project.exists()
+
+
+def test_move_project_backs_up_config(tmp_path):
+    old_project, projects_root, claude_dir = make_test_env(tmp_path)
+    new_project = projects_root / NEW_PATH_NAME
+
+    result = move_project(str(old_project), str(new_project), claude_dir=claude_dir)
+
+    backed_up = json.loads((result.backup_path / "claude.json").read_text())
+    assert str(old_project) in backed_up["projects"]

@@ -14,6 +14,15 @@ def find_claude_dir() -> Path:
     return Path.home() / ".claude"
 
 
+def find_config_file(claude_dir: Path) -> Path:
+    """Return the .claude.json config file sitting alongside `claude_dir`.
+
+    Claude Code stores per-project config in ~/.claude.json — a sibling of the
+    ~/.claude data directory, not a file inside it.
+    """
+    return claude_dir.parent / ".claude.json"
+
+
 def find_project_dir(claude_dir: Path, project_path: str) -> Optional[Path]:
     """Find the encoded project directory in ~/.claude/projects/ for a given absolute path.
 

@@ -97,6 +97,7 @@ def print_help() -> None:
   - ~/.claude/projects/.../{{session}}.jsonl  (all sessions, recursively)
   - ~/.claude/history.jsonl
   - ~/.claude/usage-data/session-meta/*.json
+  - ~/.claude.json                          (trust, permissions, MCP servers)
 
 {_c("BACKUP", BOLD)}
   By default, a backup is created before any changes in:

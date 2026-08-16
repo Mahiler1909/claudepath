@@ -305,3 +305,81 @@ def test_restore_replaces_existing_project_dir(backup_env):
     assert not temp_old.exists()
 
 
+
+
+# ─── .claude.json config ───────────────────────────────────────────────────
+
+def _make_config(tmp_path: Path) -> Path:
+    """Create a minimal .claude.json with one project entry."""
+    config_path = tmp_path / ".claude.json"
+    config_path.write_text(json.dumps({
+        "numStartups": 3,
+        "projects": {"/tmp/myproject": {"hasTrustDialogAccepted": True}},
+    }, indent=2))
+    return config_path
+
+
+def test_create_backup_copies_config(tmp_path):
+    project_dir = _make_project_dir(tmp_path)
+    history = _make_history(tmp_path)
+    config_path = _make_config(tmp_path)
+
+    backup_dir = create_backup(
+        project_dir, history, tmp_path / "backups", config_path=config_path
+    )
+
+    backed_up = backup_dir / "claude.json"
+    assert backed_up.exists()
+    assert json.loads(backed_up.read_text()) == json.loads(config_path.read_text())
+
+
+def test_create_backup_records_config_in_manifest(tmp_path):
+    project_dir = _make_project_dir(tmp_path)
+    history = _make_history(tmp_path)
+    config_path = _make_config(tmp_path)
+
+    backup_dir = create_backup(
+        project_dir, history, tmp_path / "backups", config_path=config_path
+    )
+
+    manifest = (backup_dir / "manifest.txt").read_text()
+    assert f"config_path={config_path}" in manifest
+
+
+def test_create_backup_without_config(tmp_path):
+    """A missing .claude.json must not break backup creation."""
+    project_dir = _make_project_dir(tmp_path)
+    history = _make_history(tmp_path)
+
+    backup_dir = create_backup(
+        project_dir, history, tmp_path / "backups",
+        config_path=tmp_path / ".claude.json",
+    )
+
+    assert backup_dir.exists()
+    assert not (backup_dir / "claude.json").exists()
+
+
+def test_restore_backup_restores_config(tmp_path):
+    project_dir = _make_project_dir(tmp_path)
+    history = _make_history(tmp_path)
+    config_path = _make_config(tmp_path)
+    backup_dir = create_backup(
+        project_dir, history, tmp_path / "backups", config_path=config_path
+    )
+
+    # Simulate a botched rewrite, then roll back
+    config_path.write_text(json.dumps({"projects": {}}))
+    assert restore_backup(backup_dir) is True
+
+    projects = json.loads(config_path.read_text())["projects"]
+    assert projects["/tmp/myproject"] == {"hasTrustDialogAccepted": True}
+
+
+def test_restore_backup_without_config_still_succeeds(tmp_path):
+    """Backups taken before config support restore cleanly."""
+    project_dir = _make_project_dir(tmp_path)
+    history = _make_history(tmp_path)
+    backup_dir = create_backup(project_dir, history, tmp_path / "backups")
+
+    assert restore_backup(backup_dir) is True

@@ -117,6 +117,7 @@ claudepath mv --help
 | Subagent `.jsonl` files | Same as above, recursive |
 | `~/.claude/history.jsonl` | `project` field updated for all matching entries |
 | `usage-data/session-meta/*.json` | `project_path` updated (token usage & analytics) |
+| `~/.claude.json` | `projects[path]` entry moved — keeps trust approval, `allowedTools`, MCP servers and ignore patterns |
 
 > **Note:** `file-history/`, `todos/`, `tasks/`, and `shell-snapshots/` are keyed by session UUID, not by project path — they don't need updating.
 
