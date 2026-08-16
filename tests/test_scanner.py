@@ -1,8 +1,9 @@
 import json
+import shutil
 from pathlib import Path
 
 from claudepath.encoder import encode_path
-from claudepath.scanner import find_project_dir, list_projects
+from claudepath.scanner import collect_project_state, find_project_dir, list_projects
 
 
 OLD_PATH = "/Users/foo/my-project"
@@ -149,3 +150,142 @@ def test_list_projects_no_sessions_index(tmp_path):
     projects = list_projects(claude_dir)
     assert len(projects) == 1
     assert projects[0]["session_count"] == 1
+
+
+# ─── collect_project_state ─────────────────────────────────────────────────
+
+def make_state_env(tmp_path: Path) -> tuple:
+    """Create a claude dir, config, history and usage-data for one real project.
+
+    Returns (project_path, claude_dir).
+    """
+    project = tmp_path / "work" / "myproj"
+    project.mkdir(parents=True)
+    project_path = str(project.resolve())
+
+    claude_dir = tmp_path / ".claude"
+    project_dir = claude_dir / "projects" / encode_path(project_path)
+    project_dir.mkdir(parents=True)
+    (project_dir / "sess-001.jsonl").write_text(
+        json.dumps({"type": "user", "cwd": project_path}) + "\n"
+    )
+
+    (claude_dir / "history.jsonl").write_text(
+        json.dumps({"display": "a", "project": project_path}) + "\n"
+        + json.dumps({"display": "b", "project": project_path}) + "\n"
+        + json.dumps({"display": "c", "project": "/somewhere/else"}) + "\n"
+    )
+
+    (tmp_path / ".claude.json").write_text(json.dumps({
+        "projects": {
+            project_path: {"hasTrustDialogAccepted": True},
+            "/somewhere/else": {"hasTrustDialogAccepted": False},
+        }
+    }))
+
+    meta_dir = claude_dir / "usage-data" / "session-meta"
+    meta_dir.mkdir(parents=True)
+    (meta_dir / "s1.json").write_text(json.dumps({"project_path": project_path}))
+    (meta_dir / "s2.json").write_text(json.dumps({"project_path": "/somewhere/else"}))
+
+    return project_path, claude_dir
+
+
+def test_collect_project_state_reports_every_source(tmp_path):
+    project_path, claude_dir = make_state_env(tmp_path)
+    state = collect_project_state(claude_dir, project_path)
+
+    assert state["found"] is True
+    assert state["project_path"] == project_path
+    assert state["exists_on_disk"] is True
+    assert state["session_count"] == 1
+    assert state["config_entries"] == 1
+    assert state["history_prompts"] == 2
+    assert state["usage_data_files"] == 1
+    assert state["last_active"] is not None
+
+
+def test_collect_project_state_counts_subagent_transcripts(tmp_path):
+    project_path, claude_dir = make_state_env(tmp_path)
+    project_dir = claude_dir / "projects" / encode_path(project_path)
+    subagents = project_dir / "sess-001" / "subagents"
+    subagents.mkdir(parents=True)
+    (subagents / "agent.jsonl").write_text(json.dumps({"cwd": project_path}) + "\n")
+
+    state = collect_project_state(claude_dir, project_path)
+    assert state["session_count"] == 2
+
+
+def test_collect_project_state_counts_nested_config_entries(tmp_path):
+    project_path, claude_dir = make_state_env(tmp_path)
+    config_path = tmp_path / ".claude.json"
+    data = json.loads(config_path.read_text())
+    data["projects"][f"{project_path}/packages/api"] = {"allowedTools": []}
+    data["projects"][f"{project_path}-backup"] = {"allowedTools": []}
+    config_path.write_text(json.dumps(data))
+
+    state = collect_project_state(claude_dir, project_path)
+    assert state["config_entries"] == 2  # the project and its nested package
+
+
+def test_collect_project_state_detects_orphaned_project(tmp_path):
+    project_path, claude_dir = make_state_env(tmp_path)
+    shutil.rmtree(project_path)
+
+    state = collect_project_state(claude_dir, project_path)
+    assert state["found"] is True
+    assert state["exists_on_disk"] is False
+    assert state["session_count"] == 1
+
+
+def test_collect_project_state_not_found_for_untracked_path(tmp_path):
+    _, claude_dir = make_state_env(tmp_path)
+    untracked = tmp_path / "work" / "other"
+    untracked.mkdir(parents=True)
+
+    state = collect_project_state(claude_dir, str(untracked))
+    assert state["found"] is False
+    assert state["session_count"] == 0
+    assert state["config_entries"] == 0
+    assert state["history_prompts"] == 0
+    assert state["usage_data_files"] == 0
+
+
+def test_collect_project_state_found_via_config_alone(tmp_path):
+    """A trusted project with no transcripts yet still counts as tracked."""
+    _, claude_dir = make_state_env(tmp_path)
+    fresh = tmp_path / "work" / "fresh"
+    fresh.mkdir(parents=True)
+    config_path = tmp_path / ".claude.json"
+    data = json.loads(config_path.read_text())
+    data["projects"][str(fresh.resolve())] = {"hasTrustDialogAccepted": True}
+    config_path.write_text(json.dumps(data))
+
+    state = collect_project_state(claude_dir, str(fresh))
+    assert state["found"] is True
+    assert state["project_dir"] is None
+    assert state["config_entries"] == 1
+
+
+def test_collect_project_state_without_config_file(tmp_path):
+    project_path, claude_dir = make_state_env(tmp_path)
+    (tmp_path / ".claude.json").unlink()
+
+    state = collect_project_state(claude_dir, project_path)
+    assert state["config_entries"] == 0
+    assert state["found"] is True
+
+
+def test_collect_project_state_corrupt_config_is_ignored(tmp_path):
+    project_path, claude_dir = make_state_env(tmp_path)
+    (tmp_path / ".claude.json").write_text("{ broken")
+
+    state = collect_project_state(claude_dir, project_path)
+    assert state["config_entries"] == 0
+
+
+def test_collect_project_state_empty_claude_dir(tmp_path):
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    state = collect_project_state(claude_dir, str(tmp_path))
+    assert state["found"] is False

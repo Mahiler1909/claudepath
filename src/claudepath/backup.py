@@ -21,6 +21,7 @@ def create_backup(
     backup_base: Path,
     extra_dir: Optional[Path] = None,
     old_path: Optional[str] = None,
+    config_path: Optional[Path] = None,
 ) -> Path:
     """Create a backup of the project directory, history.jsonl, and usage-data.
 
@@ -30,6 +31,7 @@ def create_backup(
         backup_base: Base directory for backups (~/.claude/backups/claudepath/).
         extra_dir: Optional second project dir to back up (used during --merge).
         old_path: Original project path, used to identify usage-data files to back up.
+        config_path: The ~/.claude.json file to back up.
 
     Returns:
         Path to the created backup directory.
@@ -52,6 +54,10 @@ def create_backup(
     if history_path.exists():
         shutil.copy2(str(history_path), str(backup_dir / "history.jsonl"))
 
+    # Back up ~/.claude.json — it carries per-project trust and permissions
+    if config_path and config_path.exists():
+        shutil.copy2(str(config_path), str(backup_dir / "claude.json"))
+
     # Back up usage-data session-meta files that match the old project path
     claude_dir = history_path.parent
     if old_path:
@@ -64,6 +70,8 @@ def create_backup(
     ]
     if extra_dir is not None:
         manifest_lines.append(f"merge_target_dir={extra_dir}")
+    if config_path is not None:
+        manifest_lines.append(f"config_path={config_path}")
     manifest = backup_dir / "manifest.txt"
     manifest.write_text("\n".join(manifest_lines) + "\n", encoding="utf-8")
 
@@ -127,6 +135,15 @@ def restore_backup(backup_dir: Path) -> bool:
     if backup_history.exists() and history_path:
         try:
             shutil.copy2(str(backup_history), str(history_path))
+        except OSError:
+            success = False
+
+    # Restore ~/.claude.json
+    backup_config = backup_dir / "claude.json"
+    config_path = config.get("config_path", "")
+    if backup_config.exists() and config_path:
+        try:
+            shutil.copy2(str(backup_config), config_path)
         except OSError:
             success = False
 

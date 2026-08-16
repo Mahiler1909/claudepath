@@ -11,11 +11,11 @@ import urllib.error
 import urllib.request
 import json as _json
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 from claudepath import __version__
 from claudepath.mover import MoveError, move_project, preview_operation, remap_project
-from claudepath.scanner import find_claude_dir, list_projects
+from claudepath.scanner import collect_project_state, find_claude_dir, list_projects
 from claudepath.backup import (
     find_latest_backup,
     get_backup_base,
@@ -32,7 +32,7 @@ RED = "\033[31m"
 CYAN = "\033[36m"
 DIM = "\033[2m"
 
-ALL_COMMANDS = ["mv", "remap", "list", "update", "restore", "help"]
+ALL_COMMANDS = ["mv", "remap", "list", "status", "update", "restore", "help"]
 
 
 def supports_color() -> bool:
@@ -63,6 +63,7 @@ def print_help() -> None:
   {_c("mv", BOLD)} <old-path> <new-path>      Move project directory and update all Claude references
   {_c("remap", BOLD)} <old-path> <new-path>   Update Claude references only (directory already moved)
   {_c("list", BOLD)}                          List all projects tracked by Claude Code
+  {_c("status", BOLD)} [path]                 Show Claude Code state attached to one folder
   {_c("update", BOLD)}                        Update claudepath to the latest version
   {_c("restore", BOLD)}                       Restore from a previous backup
   {_c("help", BOLD)}                          Show this help message
@@ -88,6 +89,9 @@ def print_help() -> None:
   # List all Claude Code projects
   claudepath list
 
+  # Check what Claude Code state is attached to a folder
+  claudepath status ~/projects/my-app
+
   # Restore from the latest backup
   claudepath restore
 
@@ -97,6 +101,7 @@ def print_help() -> None:
   - ~/.claude/projects/.../{{session}}.jsonl  (all sessions, recursively)
   - ~/.claude/history.jsonl
   - ~/.claude/usage-data/session-meta/*.json
+  - ~/.claude.json                          (trust, permissions, MCP servers)
 
 {_c("BACKUP", BOLD)}
   By default, a backup is created before any changes in:
@@ -164,6 +169,26 @@ def _print_help_list() -> None:
 """)
 
 
+def _print_help_status() -> None:
+    print(f"""\
+{_c("claudepath status", BOLD)} — Show Claude Code state attached to one folder
+
+{_c("USAGE", BOLD)}
+  claudepath status [path] [options]
+
+  Reports the transcripts, config entry, prompt history and usage data tied to
+  a path — everything a move would carry across. Reads only; changes nothing.
+  Defaults to the current directory when no path is given.
+
+{_c("OPTIONS", BOLD)}
+  --claude-dir     Override the Claude data directory (default: ~/.claude)
+
+{_c("EXIT STATUS", BOLD)}
+  0  state was found for the path
+  1  no state found, so the path is safe to move or delete freely
+""")
+
+
 def _print_help_update() -> None:
     print(f"""\
 {_c("claudepath update", BOLD)} — Update claudepath to the latest version
@@ -202,6 +227,7 @@ _HELP_MAP = {
     "mv": _print_help_mv,
     "remap": _print_help_remap,
     "list": _print_help_list,
+    "status": _print_help_status,
     "update": _print_help_update,
     "restore": _print_help_restore,
 }
@@ -416,6 +442,76 @@ def cmd_list(args: list) -> None:
     print(_c(f"{label} ({', '.join(parts)})", DIM))
 
 
+def cmd_status(args: list) -> None:
+    if "--help" in args or "-h" in args:
+        _print_help_status()
+        return
+
+    claude_dir, positional = _parse_status_args(args)
+    project_path = positional[0] if positional else os.getcwd()
+    state = collect_project_state(claude_dir, project_path)
+
+    if not state["found"]:
+        print(f"No Claude Code state found for {_c(state['project_path'], BOLD)}")
+        sys.exit(1)
+
+    _print_status(state)
+
+
+def _parse_status_args(args: list) -> Tuple[Path, list]:
+    """Split status arguments into (claude_dir, positional paths)."""
+    claude_dir = find_claude_dir()
+    positional = []
+    skip_next = False
+    for i, arg in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--claude-dir":
+            if i + 1 < len(args):
+                claude_dir = Path(args[i + 1]).expanduser()
+            skip_next = True
+        elif arg.startswith("--"):
+            print_error(f"Unknown option: {arg}")
+            sys.exit(1)
+        else:
+            positional.append(arg)
+    return claude_dir, positional
+
+
+def _print_status(state: dict) -> None:
+    """Print the collected state as an aligned label/value block."""
+    on_disk = state["exists_on_disk"]
+    marker = _c(" ✓", GREEN) if on_disk else _c(" ✗ orphaned", RED, DIM)
+    print(f"\nClaude Code state for {_c(state['project_path'], BOLD)}{marker}\n")
+
+    for label, value in _status_rows(state):
+        print(f"  {_c(label.ljust(12), DIM)} {value}")
+
+    if not on_disk:
+        print(f"\n  {_c('The directory no longer exists.', YELLOW)} "
+              f"{_c('Use remap to point this state at its new location.', DIM)}")
+    print()
+
+
+def _status_rows(state: dict) -> list:
+    """Build the label/value rows worth showing for `state`."""
+    rows = []
+    if state["project_dir"]:
+        sessions = state["session_count"]
+        last_active = (state["last_active"] or "unknown")[:16].replace("T", " ")
+        rows.append(("transcripts", f"{sessions} session(s), last active {last_active}"))
+        rows.append(("location", str(state["project_dir"])))
+    if state["config_entries"]:
+        rows.append(("config", f"{state['config_entries']} entry(ies) in .claude.json "
+                               f"(trust, permissions, MCP servers)"))
+    if state["history_prompts"]:
+        rows.append(("history", f"{state['history_prompts']} prompt(s) in history.jsonl"))
+    if state["usage_data_files"]:
+        rows.append(("usage data", f"{state['usage_data_files']} session-meta file(s)"))
+    return rows
+
+
 def cmd_restore(args: list) -> None:
     if "--help" in args or "-h" in args:
         _print_help_restore()
@@ -624,6 +720,8 @@ def main() -> None:
         cmd_remap(rest)
     elif command == "list":
         cmd_list(rest)
+    elif command == "status":
+        cmd_status(rest)
     else:
         matches = difflib.get_close_matches(command, ALL_COMMANDS, n=1, cutoff=0.6)
         if matches:

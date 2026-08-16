@@ -4,6 +4,7 @@ from pathlib import Path
 
 from claudepath.updaters import (
     merge_sessions_index,
+    update_config,
     update_history,
     update_jsonl_files,
     update_sessions_index,
@@ -455,3 +456,185 @@ def test_merge_sessions_index_preserves_dst_mtime(tmp_path):
     merged = merge_sessions_index(dst_index, src_index, OLD_PATH, NEW_PATH, NEW_ENCODED)
     assert merged == 1
     assert dst_index.stat().st_mtime_ns == OLD_MTIME_NS
+
+
+# ─── .claude.json config ───────────────────────────────────────────────────
+
+def make_config(home: Path, projects: dict = None) -> Path:
+    """Write a ~/.claude.json containing `projects` plus unrelated top-level keys."""
+    if projects is None:
+        projects = {
+            OLD_PATH: {
+                "hasTrustDialogAccepted": True,
+                "allowedTools": ["Bash(git *)"],
+                "mcpServers": {"backlog": {"command": "backlog-mcp"}},
+                "ignorePatterns": ["dist/"],
+            }
+        }
+    config = {"numStartups": 42, "projects": projects, "userID": "abc123"}
+    config_path = home / ".claude.json"
+    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    return config_path
+
+
+def read_config(config_path: Path) -> dict:
+    return json.loads(config_path.read_text(encoding="utf-8"))
+
+
+def test_update_config_moves_project_entry(tmp_path):
+    config_path = make_config(tmp_path)
+    moved = update_config(config_path, OLD_PATH, NEW_PATH)
+    assert moved == 1
+
+    projects = read_config(config_path)["projects"]
+    assert OLD_PATH not in projects
+    assert NEW_PATH in projects
+
+
+def test_update_config_preserves_entry_contents(tmp_path):
+    config_path = make_config(tmp_path)
+    update_config(config_path, OLD_PATH, NEW_PATH)
+
+    entry = read_config(config_path)["projects"][NEW_PATH]
+    assert entry["hasTrustDialogAccepted"] is True
+    assert entry["allowedTools"] == ["Bash(git *)"]
+    assert entry["mcpServers"] == {"backlog": {"command": "backlog-mcp"}}
+    assert entry["ignorePatterns"] == ["dist/"]
+
+
+def test_update_config_leaves_other_keys_untouched(tmp_path):
+    config_path = make_config(tmp_path)
+    update_config(config_path, OLD_PATH, NEW_PATH)
+
+    data = read_config(config_path)
+    assert data["numStartups"] == 42
+    assert data["userID"] == "abc123"
+
+
+def test_update_config_moves_nested_project_entries(tmp_path):
+    config_path = make_config(tmp_path, projects={
+        OLD_PATH: {"hasTrustDialogAccepted": True},
+        f"{OLD_PATH}/packages/api": {"allowedTools": ["Read"]},
+        "/Users/foo/unrelated": {"hasTrustDialogAccepted": False},
+    })
+    moved = update_config(config_path, OLD_PATH, NEW_PATH)
+    assert moved == 2
+
+    projects = read_config(config_path)["projects"]
+    assert projects[NEW_PATH] == {"hasTrustDialogAccepted": True}
+    assert projects[f"{NEW_PATH}/packages/api"] == {"allowedTools": ["Read"]}
+    assert projects["/Users/foo/unrelated"] == {"hasTrustDialogAccepted": False}
+
+
+def test_update_config_does_not_match_sibling_prefix(tmp_path):
+    """/Users/foo/old-project must not match /Users/foo/old-project-backup."""
+    sibling = f"{OLD_PATH}-backup"
+    config_path = make_config(tmp_path, projects={
+        OLD_PATH: {"hasTrustDialogAccepted": True},
+        sibling: {"hasTrustDialogAccepted": False},
+    })
+    moved = update_config(config_path, OLD_PATH, NEW_PATH)
+    assert moved == 1
+
+    projects = read_config(config_path)["projects"]
+    assert sibling in projects
+    assert projects[sibling] == {"hasTrustDialogAccepted": False}
+
+
+def test_update_config_merges_into_existing_destination(tmp_path):
+    """A stale destination entry is kept, but the moved project's values win."""
+    config_path = make_config(tmp_path, projects={
+        OLD_PATH: {"hasTrustDialogAccepted": True, "allowedTools": ["Bash(git *)"]},
+        NEW_PATH: {"hasTrustDialogAccepted": False, "ignorePatterns": ["stale/"]},
+    })
+    moved = update_config(config_path, OLD_PATH, NEW_PATH)
+    assert moved == 1
+
+    projects = read_config(config_path)["projects"]
+    assert OLD_PATH not in projects
+    assert projects[NEW_PATH]["hasTrustDialogAccepted"] is True
+    assert projects[NEW_PATH]["allowedTools"] == ["Bash(git *)"]
+    assert projects[NEW_PATH]["ignorePatterns"] == ["stale/"]
+
+
+def test_update_config_dry_run_does_not_write(tmp_path):
+    config_path = make_config(tmp_path)
+    original = config_path.read_text()
+
+    moved = update_config(config_path, OLD_PATH, NEW_PATH, dry_run=True)
+    assert moved == 1
+    assert config_path.read_text() == original
+
+
+def test_update_config_returns_zero_if_no_match(tmp_path):
+    config_path = make_config(tmp_path)
+    assert update_config(config_path, "/some/other/path", NEW_PATH) == 0
+
+
+def test_update_config_missing_file(tmp_path):
+    assert update_config(tmp_path / ".claude.json", OLD_PATH, NEW_PATH) == 0
+
+
+def test_update_config_corrupt_json_is_ignored(tmp_path):
+    config_path = tmp_path / ".claude.json"
+    config_path.write_text("{ not valid json", encoding="utf-8")
+    assert update_config(config_path, OLD_PATH, NEW_PATH) == 0
+    assert config_path.read_text() == "{ not valid json"
+
+
+def test_update_config_without_projects_key(tmp_path):
+    config_path = tmp_path / ".claude.json"
+    config_path.write_text(json.dumps({"numStartups": 1}), encoding="utf-8")
+    assert update_config(config_path, OLD_PATH, NEW_PATH) == 0
+
+
+def test_update_config_leaves_no_temp_files(tmp_path):
+    config_path = make_config(tmp_path)
+    update_config(config_path, OLD_PATH, NEW_PATH)
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_update_config_preserves_mtime(tmp_path):
+    config_path = make_config(tmp_path)
+    _set_mtime(config_path)
+
+    update_config(config_path, OLD_PATH, NEW_PATH)
+    assert config_path.stat().st_mtime_ns == OLD_MTIME_NS
+
+
+def test_update_config_keeps_two_space_indent(tmp_path):
+    """Claude Code writes this file with indent=2; a reformat would be a huge diff."""
+    config_path = make_config(tmp_path)
+    update_config(config_path, OLD_PATH, NEW_PATH)
+
+    lines = config_path.read_text().splitlines()
+    assert lines[0] == "{"
+    assert lines[1].startswith('  "')
+
+
+def test_update_config_preserves_key_order(tmp_path):
+    """A moved entry keeps its position so the diff stays small."""
+    config_path = make_config(tmp_path, projects={
+        "/Users/foo/aaa": {"hasTrustDialogAccepted": True},
+        OLD_PATH: {"hasTrustDialogAccepted": True},
+        "/Users/foo/zzz": {"hasTrustDialogAccepted": True},
+    })
+    update_config(config_path, OLD_PATH, NEW_PATH)
+
+    keys = list(read_config(config_path)["projects"])
+    assert keys == ["/Users/foo/aaa", NEW_PATH, "/Users/foo/zzz"]
+
+
+def test_update_config_merge_drops_stale_destination_slot(tmp_path):
+    """When merging, the destination's old slot must not survive as a duplicate."""
+    config_path = make_config(tmp_path, projects={
+        NEW_PATH: {"hasTrustDialogAccepted": False, "ignorePatterns": ["stale/"]},
+        OLD_PATH: {"hasTrustDialogAccepted": True},
+    })
+    moved = update_config(config_path, OLD_PATH, NEW_PATH)
+    assert moved == 1
+
+    projects = read_config(config_path)["projects"]
+    assert list(projects) == [NEW_PATH]
+    assert projects[NEW_PATH]["hasTrustDialogAccepted"] is True
+    assert projects[NEW_PATH]["ignorePatterns"] == ["stale/"]
