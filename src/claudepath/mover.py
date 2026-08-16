@@ -10,8 +10,8 @@ from typing import Optional, Tuple
 
 from claudepath.backup import create_backup, get_backup_base, restore_backup
 from claudepath.encoder import encode_path
-from claudepath.scanner import find_claude_dir, find_project_dir
-from claudepath.updaters import merge_sessions_index, update_history, update_jsonl_files, update_sessions_index, update_usage_data
+from claudepath.scanner import find_claude_dir, find_config_file, find_project_dir
+from claudepath.updaters import merge_sessions_index, update_config, update_history, update_jsonl_files, update_sessions_index, update_usage_data
 
 
 class MoveError(Exception):
@@ -29,6 +29,7 @@ class MoveResult:
         self.jsonl_lines_changed = 0
         self.history_lines_changed = 0
         self.usage_data_updated = 0
+        self.config_entries_moved = 0
         self.backup_path: Optional[Path] = None
         self.dry_run = False
 
@@ -55,6 +56,11 @@ class MoveResult:
         if self.usage_data_updated:
             lines.append(
                 f"{prefix}updated {self.usage_data_updated} usage-data file(s)"
+            )
+        if self.config_entries_moved:
+            lines.append(
+                f"{prefix}moved {self.config_entries_moved} project entry(ies) "
+                f"in .claude.json (trust, permissions, MCP servers)"
             )
         if self.backup_path:
             lines.append(f"backup saved to: {self.backup_path}")
@@ -174,7 +180,8 @@ def _prepare_operation(
         backup_base = get_backup_base(claude_dir)
         extra_dir = new_project_dir if (merge and new_project_dir.exists()) else None
         result.backup_path = create_backup(
-            project_dir, history_path, backup_base, extra_dir=extra_dir, old_path=old_path
+            project_dir, history_path, backup_base, extra_dir=extra_dir,
+            old_path=old_path, config_path=find_config_file(claude_dir),
         )
         if verbose:
             print(f"  Backup created: {result.backup_path}", file=sys.stderr)
@@ -360,4 +367,8 @@ def _update_data_files(
 
     result.usage_data_updated = update_usage_data(
         claude_dir, old_path, new_path, dry_run=dry_run, verbose=verbose
+    )
+
+    result.config_entries_moved = update_config(
+        find_config_file(claude_dir), old_path, new_path, dry_run=dry_run, verbose=verbose
     )

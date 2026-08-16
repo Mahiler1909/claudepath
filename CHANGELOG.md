@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`~/.claude.json` project entries now move with the project**: the config file keys per-project state by absolute path, so a moved project previously lost its trust approval, `allowedTools`, MCP servers and ignore patterns — and prompted for trust again at the new location. Nested entries move too, so relocating `/a` also relocates `/a/packages/api`
+- `~/.claude.json` is included in automatic backups and restored on rollback
+
 ## [1.1.2] - 2026-07-03
 
 ### Fixed

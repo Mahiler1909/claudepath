@@ -187,6 +187,46 @@ def update_history(
     return count
 
 
+def update_config(
+    config_path: Path,
+    old_path: str,
+    new_path: str,
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> int:
+    """Move projects[old_path] to projects[new_path] in ~/.claude.json.
+
+    The config file keys per-project state by absolute path: trust approval,
+    allowedTools, MCP servers and ignore patterns. Without this the moved
+    project prompts for trust again and loses its permissions and MCP setup.
+
+    Nested entries move too, so relocating /a also relocates /a/sub. When the
+    destination already has an entry the two are merged and the moved
+    project's values win — its settings are the ones meant to follow it.
+
+    Returns the number of project entries moved.
+    """
+    if not config_path.exists():
+        return 0
+
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return 0
+
+    projects = data.get("projects")
+    if not isinstance(projects, dict):
+        return 0
+
+    moved = _remap_project_keys(projects, old_path, new_path)
+    if verbose and moved:
+        print(f"    .claude.json: moved {moved} project entry(ies)", file=sys.stderr)
+    if moved and not dry_run:
+        _write_json_atomic(config_path, data)
+
+    return moved
+
+
 def merge_sessions_index(
     dst_index: Path,
     src_index: Path,
@@ -242,6 +282,66 @@ def merge_sessions_index(
             )
 
     return merged
+
+
+def _remap_project_keys(projects: dict, old: str, new: str) -> int:
+    """Rekey `projects` entries from `old` to `new`, nested paths included.
+
+    Entries are rewritten in place so each keeps its original position: moving
+    one project should produce a two-line diff rather than reshuffling a config
+    some users track in version control.
+    """
+    destinations = {
+        _remapped_key(k, old, new) for k in projects
+        if _remapped_key(k, old, new) != k
+    }
+
+    remapped = {}
+    moved = 0
+    for key, entry in projects.items():
+        new_key = _remapped_key(key, old, new)
+        if new_key != key:
+            remapped[new_key] = _merge_project_entries(projects.get(new_key), entry)
+            moved += 1
+        elif key not in destinations:
+            remapped[key] = entry
+
+    projects.clear()
+    projects.update(remapped)
+    return moved
+
+
+def _remapped_key(key: str, old: str, new: str) -> str:
+    """Return `key` with an `old` path prefix swapped for `new`, else unchanged."""
+    if key == old or key.startswith(old + "/"):
+        return new + key[len(old):]
+    return key
+
+
+def _merge_project_entries(existing, incoming):
+    """Combine a stale destination entry with the moved one; moved values win."""
+    if isinstance(existing, dict) and isinstance(incoming, dict):
+        return {**existing, **incoming}
+    return incoming
+
+
+def _write_json_atomic(path: Path, data) -> None:
+    """Write `data` to `path` via a temp file in the same directory.
+
+    The config file is rewritten whole, so a partial write would corrupt every
+    project entry rather than just the one being moved. Claude Code writes this
+    file with 2-space indentation; matching it keeps the diff to the moved keys.
+    """
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        with preserve_mtime(path):
+            os.replace(tmp_path, path)
+    except OSError:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
 
 def replace_path_values(obj, old: str, new: str) -> bool:
