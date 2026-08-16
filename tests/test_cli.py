@@ -14,6 +14,7 @@ from claudepath.cli import (
     parse_mv_remap_args,
     supports_color,
     cmd_list,
+    cmd_status,
     cmd_restore,
     cmd_update,
     main,
@@ -363,3 +364,90 @@ def test_cmd_list_summary_mixed(tmp_path, monkeypatch, capsys):
     cmd_list([])
     captured = capsys.readouterr()
     assert "2 projects (1 on disk, 1 orphaned)" in captured.out
+
+
+# ─── status ────────────────────────────────────────────────────────────────
+
+def _make_status_env(tmp_path):
+    """Create a tracked project and return (project_path, claude_dir)."""
+    import json
+    from claudepath.encoder import encode_path
+
+    project = tmp_path / "work" / "myproj"
+    project.mkdir(parents=True)
+    project_path = str(project.resolve())
+
+    claude_dir = tmp_path / ".claude"
+    project_dir = claude_dir / "projects" / encode_path(project_path)
+    project_dir.mkdir(parents=True)
+    (project_dir / "sess-001.jsonl").write_text(
+        json.dumps({"type": "user", "cwd": project_path}) + "\n"
+    )
+    (tmp_path / ".claude.json").write_text(
+        json.dumps({"projects": {project_path: {"hasTrustDialogAccepted": True}}})
+    )
+    return project_path, claude_dir
+
+
+def test_cmd_status_reports_tracked_project(tmp_path, capsys):
+    project_path, claude_dir = _make_status_env(tmp_path)
+
+    cmd_status([project_path, "--claude-dir", str(claude_dir)])
+
+    out = capsys.readouterr().out
+    assert project_path in out
+    assert "1 session(s)" in out
+    assert ".claude.json" in out
+
+
+def test_cmd_status_exits_nonzero_when_nothing_found(tmp_path, capsys):
+    _, claude_dir = _make_status_env(tmp_path)
+    untracked = tmp_path / "work" / "other"
+    untracked.mkdir(parents=True)
+
+    with pytest.raises(SystemExit) as exc:
+        cmd_status([str(untracked), "--claude-dir", str(claude_dir)])
+
+    assert exc.value.code == 1
+    assert "No Claude Code state found" in capsys.readouterr().out
+
+
+def test_cmd_status_flags_orphaned_project(tmp_path, capsys):
+    import shutil
+
+    project_path, claude_dir = _make_status_env(tmp_path)
+    shutil.rmtree(project_path)
+
+    cmd_status([project_path, "--claude-dir", str(claude_dir)])
+
+    out = capsys.readouterr().out
+    assert "orphaned" in out
+    assert "no longer exists" in out
+
+
+def test_cmd_status_defaults_to_cwd(tmp_path, capsys, monkeypatch):
+    project_path, claude_dir = _make_status_env(tmp_path)
+    monkeypatch.chdir(project_path)
+
+    cmd_status(["--claude-dir", str(claude_dir)])
+
+    assert project_path in capsys.readouterr().out
+
+
+def test_cmd_status_rejects_unknown_option(tmp_path):
+    _, claude_dir = _make_status_env(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        cmd_status(["--bogus", "--claude-dir", str(claude_dir)])
+    assert exc.value.code == 1
+
+
+def test_cmd_status_help(capsys):
+    cmd_status(["--help"])
+    out = capsys.readouterr().out
+    assert "claudepath status" in out
+    assert "EXIT STATUS" in out
+
+
+def test_status_is_a_known_command():
+    from claudepath.cli import ALL_COMMANDS
+    assert "status" in ALL_COMMANDS

@@ -64,6 +64,30 @@ claudepath mv ~/old/path ~/new/path --dry-run
 claudepath list
 ```
 
+### Check one folder
+
+Show everything Claude Code has attached to a single path — the transcripts, config entry, prompt history and usage data a move would carry across. Read-only, and defaults to the current directory:
+
+```bash
+claudepath status ~/projects/my-app
+claudepath status                     # current directory
+```
+
+```
+Claude Code state for /Users/foo/projects/my-app ✓
+
+  transcripts  8 session(s), last active 2026-08-16 13:12
+  location     ~/.claude/projects/-Users-foo-projects-my-app
+  config       1 entry(ies) in .claude.json (trust, permissions, MCP servers)
+  history      92 prompt(s) in history.jsonl
+```
+
+Exits `1` when nothing is attached, so it works in scripts:
+
+```bash
+claudepath status ~/scratch >/dev/null || rm -rf ~/scratch
+```
+
 ### Update claudepath
 
 Update to the latest version — auto-detects whether you installed via Homebrew or pipx:

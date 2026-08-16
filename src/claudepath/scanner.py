@@ -3,8 +3,9 @@ Scanner for Claude Code project data in ~/.claude/.
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from claudepath.encoder import encode_path
 
@@ -145,6 +146,115 @@ def _read_cwd_from_jsonl(jsonl_file: Path) -> Optional[str]:
     except OSError:
         pass
     return None
+
+
+def collect_project_state(claude_dir: Path, project_path: str) -> Dict:
+    """Gather every piece of Claude Code state attached to `project_path`.
+
+    Reports what a move would carry across, without modifying anything.
+
+    Returns a dict with keys:
+        - project_path: the resolved absolute path that was queried
+        - exists_on_disk: whether the directory is still present
+        - project_dir: the ~/.claude/projects/{encoded}/ Path, or None
+        - session_count: number of .jsonl transcripts, subagents included
+        - last_active: ISO timestamp of the newest transcript, or None
+        - config_entries: number of .claude.json projects[] entries, nested included
+        - history_prompts: number of history.jsonl prompts typed here
+        - usage_data_files: number of usage-data/session-meta files
+        - found: True if any state at all is attached to the path
+    """
+    resolved = str(Path(project_path).expanduser().resolve())
+    project_dir = find_project_dir(claude_dir, resolved)
+
+    session_count, last_active = _summarize_sessions(project_dir)
+    state = {
+        "project_path": resolved,
+        "exists_on_disk": Path(resolved).is_dir(),
+        "project_dir": project_dir,
+        "session_count": session_count,
+        "last_active": last_active,
+        "config_entries": _count_config_entries(find_config_file(claude_dir), resolved),
+        "history_prompts": _count_history_prompts(claude_dir / "history.jsonl", resolved),
+        "usage_data_files": _count_usage_data_files(claude_dir, resolved),
+    }
+    state["found"] = bool(
+        project_dir
+        or state["config_entries"]
+        or state["history_prompts"]
+        or state["usage_data_files"]
+    )
+    return state
+
+
+def _summarize_sessions(project_dir: Optional[Path]) -> Tuple[int, Optional[str]]:
+    """Return (transcript count, ISO timestamp of the newest one)."""
+    if not project_dir or not project_dir.exists():
+        return 0, None
+
+    transcripts = list(project_dir.rglob("*.jsonl"))
+    if not transcripts:
+        return 0, None
+
+    newest = max(transcripts, key=lambda f: f.stat().st_mtime)
+    return len(transcripts), datetime.fromtimestamp(newest.stat().st_mtime).isoformat()
+
+
+def _count_config_entries(config_path: Path, project_path: str) -> int:
+    """Count .claude.json projects[] entries for `project_path` and anything under it."""
+    if not config_path.exists():
+        return 0
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return 0
+
+    projects = data.get("projects")
+    if not isinstance(projects, dict):
+        return 0
+    return sum(
+        1 for key in projects
+        if key == project_path or key.startswith(project_path + "/")
+    )
+
+
+def _count_history_prompts(history_path: Path, project_path: str) -> int:
+    """Count history.jsonl entries whose project field matches `project_path`."""
+    if not history_path.exists():
+        return 0
+
+    count = 0
+    try:
+        with open(history_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if project_path not in line:
+                    continue
+                try:
+                    if json.loads(line).get("project") == project_path:
+                        count += 1
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return 0
+    return count
+
+
+def _count_usage_data_files(claude_dir: Path, project_path: str) -> int:
+    """Count usage-data/session-meta files recording work in `project_path`."""
+    meta_dir = claude_dir / "usage-data" / "session-meta"
+    if not meta_dir.exists():
+        return 0
+
+    count = 0
+    for json_file in meta_dir.glob("*.json"):
+        try:
+            data = json.loads(json_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        recorded = data.get("project_path", "")
+        if recorded == project_path or recorded.startswith(project_path + "/"):
+            count += 1
+    return count
 
 
 def list_projects(claude_dir: Path) -> List[Dict]:
